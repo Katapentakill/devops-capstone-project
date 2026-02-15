@@ -50,3 +50,70 @@ spec:
           rm -rf "${WORKSPACE_SOURCE_PATH}"/..?*
         fi
 
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: flake8
+spec:
+  description: Run flake8 linter
+  workspaces:
+    - name: source
+  steps:
+    - name: lint
+      image: python:3.9-slim
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+        pip install --quiet flake8
+        flake8 service --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 service --count --max-complexity=10 --max-line-length=127 --statistics
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: nose
+spec:
+  description: Run unit tests with Nose
+  workspaces:
+    - name: source
+  params:
+    - name: DATABASE_URI
+      type: string
+      default: "postgresql://postgres:postgres@postgresql:5432/postgres"
+  steps:
+    - name: test
+      image: python:3.9-slim
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: DATABASE_URI
+          value: $(params.DATABASE_URI)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+        pip install --quiet -r requirements.txt
+        nosetests -v --with-spec --spec-color --with-coverage --cover-package=service
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: deploy-accounts
+spec:
+  description: Replace image placeholder and deploy to OpenShift
+  workspaces:
+    - name: source
+  params:
+    - name: build-image
+      type: string
+  steps:
+    - name: deploy
+      image: quay.io/openshift/origin-cli:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+        sed -e "s|IMAGE_NAME_HERE|$(params.build-image)|g" deploy/deployment.yaml | oc apply -f -
+
